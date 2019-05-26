@@ -120,15 +120,14 @@ cell gs p = el "td" $ do
       translatePiece Black Knight = static @"chess/nd.svg"
       translatePiece Black Pawn   = static @"chess/pd.svg"
 
-move :: Point -> GameState -> GameState
-move new gs@(GameState brd clr act) = fromMaybe (game clr brd) $ case act of
+click :: Point -> GameState -> GameState
+click new gs@(GameState brd clr act) = fromMaybe (game clr brd) $ case act of
   Nothing -> do
     Just (ColoredPiece color piece) <- pure $ brd A.! new
     guard $ color == clr
     pure $ GameState brd clr $ Just new
   Just old -> do
-    guard $ validBasicMove brd clr old new
-    let newBoard = brd // [(old, Nothing), (new, brd A.! old)]
+    newBoard <- basicMove brd clr old new
     guard $ not $ inCheck newBoard clr
     pure $ game (opponent clr) newBoard
   where
@@ -138,17 +137,29 @@ move new gs@(GameState brd clr act) = fromMaybe (game clr brd) $ case act of
       Just (ColoredPiece color piece) <- pure $ brd A.! new
       guard $ color == clr
 
+validSquares :: [Point]
+validSquares = [(i, j) | i <- [0..7], j <- [0..7]]
+
+isValidSquare :: Point -> Bool
+isValidSquare (x, y) = x >= 0 && y >= 0 && x <= 7 && y <= 7
+
 inCheck :: Board -> Color -> Bool
 inCheck board turn = not $ null $ do
-  let points = [(i, j) | i <- [0..7], j <- [0..7]]
-
-  new <- points
+  new <- validSquares
   Just (ColoredPiece newColor King) <- pure $ board A.! new
   guard $ newColor == turn
 
-  old <- points
+  old <- validSquares
   let attacker = opponent turn
   guard $ validBasicMove board attacker old new
+
+inCheckMate :: Board -> Color -> Bool
+inCheckMate board turn = inCheck board turn && null escapeScenarios where
+  escapeScenarios = do
+    old <- validSquares
+    new <- validSquares
+    newBoard <- maybeToList $ basicMove board turn old new
+    guard $ not $ inCheck newBoard turn
 
 opponent :: Color -> Color
 opponent = \case
@@ -156,8 +167,11 @@ opponent = \case
   White -> Black
 
 validBasicMove :: Board -> Color -> Point -> Point -> Bool
-validBasicMove brd turn old new = isJust $ do
-  Just (ColoredPiece color piece) <- pure $ brd A.! old
+validBasicMove brd turn old new = isJust $ basicMove brd turn old new
+
+basicMove :: Board -> Color -> Point -> Point -> Maybe Board
+basicMove brd turn old new = do
+  oldSquare@(Just (ColoredPiece color piece)) <- pure $ brd A.! old
   guard $ turn == color
   guard $ old /= new
   let dest = brd A.! new
@@ -179,13 +193,14 @@ validBasicMove brd turn old new = isJust $ do
       knightLike = (abs diffX == 1 && abs diffY == 2) || (abs diffX == 2 && abs diffY == 1)
       kingLike = abs diffX <= 1 && abs diffY <= 1
 
-      -- There has got to be a better way to write this:
       stepX = signum diffX
       stepY = signum diffY
-      steps (x, y) | x >= 8 || y >= 8       = []
-                   | x == newX && y == newY = []
-                   | otherwise              = (x, y):steps (x + stepX, y + stepY)
-      clearPath = all isNothing $ (brd A.!) <$> steps (oldX + stepX, oldY + stepY)
+      nextStep (x, y) = (x + stepX, y + stepY)
+      -- theoretically, the `takeWhile isValidSquare` should be unnecessary
+      -- but I'm including it anyway so this value is always finite even with
+      -- knight's moves
+      steps = takeWhile (/= new) $ takeWhile isValidSquare $ iterate nextStep $ nextStep old
+      clearPath = all isNothing $ (brd A.!) <$> steps
 
   case piece of
     Pawn -> guard $ if isCapture then pawnCaptureLike else pawnLike && clearPath
@@ -195,7 +210,8 @@ validBasicMove brd turn old new = isJust $ do
     Knight -> guard knightLike
     King -> guard kingLike
 
-  pure ()
+  pure $ brd // [(old, Nothing), (new, oldSquare)]
+
   where
     pawnDirection = case turn of
       White -> 1
@@ -218,14 +234,14 @@ app = divClass "container" $ do
     el "br" blank
     el "div" $ do
       rec
-        gs  <- foldDyn move initialState pos
+        gs  <- foldDyn click initialState pos
         pos <- mkBoard gs
         elAttr "h3" ("style" =: "text-align: center") $ do
-          dynText $ T.pack . show . turn <$> gs
-          text "'s Turn"
-          dynText $ checkText . checkInCheck <$> gs
+          dynText $ T.pack . scenarioText <$> gs
       pure ()
-  where
-  checkText True = " ... and they're in check"
-  checkText False = ""
-  checkInCheck (GameState board turn _) = inCheck board turn
+
+scenarioText :: GameState -> String
+scenarioText (GameState board turn _) = show turn <> checkText where
+  checkText | inCheckMate board turn = " has been checkmated"
+            | inCheck board turn     = "'s turn -- to get out of check"
+            | otherwise              = "'s turn"
