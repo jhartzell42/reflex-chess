@@ -112,11 +112,8 @@ app = divClass "container" $ do
     el "br" blank
     elAttr "div" ("style" =: "text-align: center") $ do
       rec
-        appState <- foldDyn ($) initialState $ leftmost
-          [ click <$> pos
-          , const initialState <$ domEvent Click resetButton
-          , leftmost promotionPiece
-          ]
+        appState <- foldDyn ($) initialState $ leftmost $
+          [click <$> pos, const initialState <$ domEvent Click resetButton] <> promotionPiece
         pos <- mkBoard appState
         el "h3" $ do
           dynText $ T.pack . scenarioText <$> appState
