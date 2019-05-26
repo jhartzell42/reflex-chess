@@ -57,12 +57,19 @@ data CastleState = CastleState
 
 data GameState = GameState
   { gameStateBoard       :: Board
-  , gameStateCastle      :: CastleState
+  , gameStateCastle      :: Color -> CastleState
   , gameStatePhantomPawn :: (Maybe Point)
-  } deriving Eq
+  }
+
+instance Eq GameState where
+  (GameState brd cstl pawn) == (GameState brd' cstl' pawn') =
+    brd == brd' &&
+    cstl White == cstl' White &&
+    cstl Black == cstl' Black &&
+    pawn == pawn'
 
 initialGameState :: GameState
-initialGameState = GameState initialBoard (CastleState True True) Nothing
+initialGameState = GameState initialBoard (const $ CastleState True True) Nothing
 
 validSquares :: [Point]
 validSquares = [(i, j) | i <- [0..7], j <- [0..7]]
@@ -155,6 +162,8 @@ basicMove brd turn old new = do
       steps = takeWhile (/= new) $ takeWhile isValidSquare $ iterate nextStep $ nextStep old
       clearPath = all isNothing $ (brd <!>) <$> steps
 
+      -- in the form of potential additional board modifications
+      -- some special moves
       enPassant :: [(Point, Maybe ColoredPiece)]
       enPassant = toList $ do
         Pawn <- pure piece
@@ -167,6 +176,23 @@ basicMove brd turn old new = do
             Black -> (phantomX, 3)
         pure $ (coordinates, Nothing)
 
+      -- TODO: Handle e.g. in check restriction, other restrictions
+      oldCastleState = gameStateCastle brd turn
+      castle :: [(Point, Maybe ColoredPiece)]
+      castle = fromMaybe [] $ do
+        King <- pure piece
+        (test, rookX) <- case diffX of
+          -2 -> pure (canCastleQueenSide, 0)
+          2  -> pure (canCastleKingSide, 7)
+          _  -> Nothing
+        guard $ test oldCastleState
+        guard clearPath
+        let rookOld = (rookX, oldY)
+            rookNew = (oldX + stepX, newY)
+        guard $ validBasicMove brd turn rookOld rookNew
+        let rook = brd <!> rookOld
+        pure $ [(rookOld, Nothing), (rookNew, rook)]
+
   case piece of
     Pawn | isCapture -> guard pawnCaptureLike
     Pawn | otherwise -> guard $ pawnLike || not (null enPassant)
@@ -174,18 +200,23 @@ basicMove brd turn old new = do
     Rook -> guard $ rookLike && clearPath
     Queen -> guard $ (rookLike || bishopLike) && clearPath
     Knight -> guard knightLike
-    King -> guard kingLike
+    King -> guard $ kingLike || not (null castle)
 
   let
-    newPhantomPawn = do
-      Pawn <- pure piece
-      guard $ abs diffY == 2
-      pure $ (oldX, oldY + stepY)
+    newGameStateCastle clr | clr /= turn = gameStateCastle brd clr
+                           | clr == turn = case (piece, oldX) of
+      (King, _) -> CastleState False False
+      (Rook, 7) -> oldCastleState { canCastleKingSide = False }
+      (Rook, 0) -> oldCastleState { canCastleQueenSide = False }
+      _         -> oldCastleState
 
   pure $ GameState
-    { gameStateBoard = gameStateBoard brd // ([(old, Nothing), (new, oldSquare)] <> enPassant)
-    , gameStateCastle = gameStateCastle brd
-    , gameStatePhantomPawn = newPhantomPawn
+    { gameStateBoard = gameStateBoard brd // ([(old, Nothing), (new, oldSquare)] <> enPassant <> castle)
+    , gameStateCastle = newGameStateCastle
+    , gameStatePhantomPawn = do
+        Pawn <- pure piece
+        guard $ abs diffY == 2
+        pure $ (oldX, oldY + stepY)
     }
 
   where

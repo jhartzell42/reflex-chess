@@ -127,4 +127,8 @@ scenarioText (AppState board turn _) = show turn <> checkText where
             | otherwise              = "'s turn"
 
 detailText :: AppState -> String
-detailText (AppState board _ _) = show (gameStateCastle board) <> " " <> show (gameStatePhantomPawn board)
+detailText (AppState board _ _) = unwords
+  [ show $ gameStateCastle board White
+  , show $ gameStateCastle board Black
+  , show $ gameStatePhantomPawn board
+  ]
