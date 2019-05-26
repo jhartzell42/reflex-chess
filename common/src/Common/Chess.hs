@@ -74,6 +74,9 @@ initialGameState = GameState initialBoard (const $ CastleState True True) Nothin
 validSquares :: [Point]
 validSquares = [(i, j) | i <- [0..7], j <- [0..7]]
 
+promotionPieces :: [Piece]
+promotionPieces = [Queen, Rook, Bishop, Knight]
+
 isValidSquare :: Point -> Bool
 isValidSquare (x, y) = x >= 0 && y >= 0 && x <= 7 && y <= 7
 
@@ -90,14 +93,15 @@ inCheck board turn = not $ null $ do
 
   old <- validSquares
   let attacker = opponent turn
-  guard $ validBasicMove board attacker old new
+  toList $ basicMove Queen board attacker old new
 
 inCheckmate :: GameState -> Color -> Bool
 inCheckmate board turn = inCheck board turn && null escapeScenarios where
   escapeScenarios = do
     old <- validSquares
     new <- validSquares
-    newBoard <- maybeToList $ basicMove board turn old new
+    piece <- promotionPieces
+    newBoard <- toList $ basicMove piece board turn old new
     guard $ not $ inCheck newBoard turn
 
 inStalemate :: GameState -> Color -> Bool
@@ -106,21 +110,19 @@ inStalemate board turn = (not (inCheckmate board turn) && null validMoves) ||
   validMoves = do
     old <- validSquares
     new <- validSquares
-    maybeToList $ move board turn old new
+    piece <- promotionPieces
+    maybeToList $ move piece board turn old new
 
 opponent :: Color -> Color
 opponent = \case
   Black -> White
   White -> Black
 
-move :: GameState -> Color -> Point -> Point -> Maybe GameState
-move board turn old new = do
-  newBoard <- basicMove board turn old new
+move :: Piece -> GameState -> Color -> Point -> Point -> Maybe GameState
+move piece board turn old new = do
+  newBoard <- basicMove piece board turn old new
   guard $ not $ inCheck newBoard turn
   pure newBoard
-
-validBasicMove :: GameState -> Color -> Point -> Point -> Bool
-validBasicMove brd turn old new = isJust $ basicMove brd turn old new
 
 playerPieces :: GameState -> Color -> [Piece]
 playerPieces board player = do
@@ -129,11 +131,12 @@ playerPieces board player = do
   guard $ color == player
   pure piece
 
-basicMove :: GameState -> Color -> Point -> Point -> Maybe GameState
-basicMove brd turn old new = do
+basicMove :: Piece -> GameState -> Color -> Point -> Point -> Maybe GameState
+basicMove promotionPiece brd turn old new = do
   oldSquare@(Just (ColoredPiece color piece)) <- pure $ brd <!> old
   guard $ turn == color
   guard $ old /= new
+  guard $ promotionPiece `elem` promotionPieces
   let dest = brd <!> new
 
   isCapture <- case dest of
@@ -165,7 +168,7 @@ basicMove brd turn old new = do
       -- in the form of potential additional board modifications
       -- some special moves
       enPassant :: [(Point, Maybe ColoredPiece)]
-      enPassant = toList $ do
+      enPassant = fromMaybe [] $ do
         Pawn <- pure piece
         phantom@(phantomX, _) <- gameStatePhantomPawn brd
         guard pawnCaptureLike
@@ -174,7 +177,7 @@ basicMove brd turn old new = do
           coordinates = case turn of
             White -> (phantomX, 4)
             Black -> (phantomX, 3)
-        pure $ (coordinates, Nothing)
+        pure [(coordinates, Nothing)]
 
       promotion :: [(Point, Maybe ColoredPiece)]
       promotion = fromMaybe [] $ do
@@ -183,7 +186,7 @@ basicMove brd turn old new = do
           (White, 7) -> True
           (Black, 0) -> True
           _          -> False
-        pure [(new, Just (ColoredPiece turn Queen))]
+        pure [(new, Just (ColoredPiece turn promotionPiece))]
 
       oldCastleState = gameStateCastle brd turn
 
@@ -199,7 +202,7 @@ basicMove brd turn old new = do
         guard clearPath
         let rookOld = (rookX, oldY)
             rookNew = (oldX + stepX, newY)
-        guard $ validBasicMove brd turn rookOld rookNew
+        basicMove Queen brd turn rookOld rookNew
         let rook = brd <!> rookOld
         pure $ [(rookOld, Nothing), (rookNew, rook)]
 

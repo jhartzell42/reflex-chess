@@ -83,16 +83,15 @@ cell gs p = el "td" $ do
 click :: Point -> AppState -> AppState
 click new (AppState brd clr act) = fromMaybe (game clr brd) $ case act of
   Nothing -> case brd <!> new of
-    Just (ColoredPiece color piece) -> do
-      guard $ color == clr
+    Just (ColoredPiece color piece) | color == clr -> do
       pure $ AppState brd clr $ Just new
-    Nothing -> do
+    _ -> do
       [theMove] <- pure $ do
         old <- validSquares
-        Just mv <- pure $ move brd clr old new
+        Just mv <- pure $ move Queen brd clr old new
         pure $ game (opponent clr) mv
       pure theMove
-  Just old -> game (opponent clr) <$> move brd clr old new
+  Just old -> game (opponent clr) <$> move Queen brd clr old new
   where
     game c b = AppState b c Nothing
     validGrab = isJust $ do
