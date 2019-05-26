@@ -12,7 +12,6 @@ module Frontend.Chess (app) where
 
 import Control.Monad
 import Control.Monad.Fix (MonadFix)
-import Data.Array.IArray as A
 import Data.Maybe
 import qualified Data.Text as T
 
@@ -21,48 +20,48 @@ import Obelisk.Generated.Static
 
 import Common.Chess
 
-data GameState = GameState 
-  { board       :: Board
-  , turn        :: Color
-  , startOfMove :: Maybe Point
+data AppState = AppState
+  { appStateState       :: GameState
+  , appStateTurn        :: Color
+  , appStateStartOfMove :: Maybe Point
   }
 
-initialState :: GameState
-initialState = GameState initialBoard White Nothing
+initialState :: AppState
+initialState = AppState initialGameState White Nothing
 
 mkBoard
   :: ( DomBuilder t m
      , MonadFix m
      , PostBuild t m
      )
-  => Dynamic t GameState -> m (Event t Point)
+  => Dynamic t AppState -> m (Event t Point)
 mkBoard gs =
   elAttr "table" ("style" =: "margin-left: auto; margin-right: auto") $ el "tbody" $ do
     rows <- mapM (row gs) [7, 6..0]
-    return $ leftmost rows
+    pure $ leftmost rows
 
 row
   :: ( DomBuilder t m
      , MonadFix m
      , PostBuild t m
      )
-  => Dynamic t GameState -> Int ->  m (Event t Point)
+  => Dynamic t AppState -> Int ->  m (Event t Point)
 row gs j =
   el "tr" $ do
     cells <- mapM (cell gs) [(i, j) | i <- [0..7]]
-    return $ leftmost cells
+    pure $ leftmost cells
 
 cell
   :: ( DomBuilder t m
      , MonadFix m
      , PostBuild t m
      )
-  => Dynamic t GameState -> Point -> m (Event t Point)
+  => Dynamic t AppState -> Point -> m (Event t Point)
 cell gs p = el "td" $ do
-    (e, _) <- elDynAttr' "img" (square p <$> gs) (return ())
-    return $ p <$ domEvent Click e
+    (e, _) <- elDynAttr' "img" (square p <$> gs) $ pure ()
+    pure $ p <$ domEvent Click e
     where
-      square pos (GameState bd _ active) = "src" =: (translate $ bd A.! p)
+      square pos (AppState bd _ active) = "src" =: (translate $ bd <!> p)
         <> "style" =: ("display: block; width: 45px; height: 45px; background-color: " <> backgroundColor active p)
         <> "draggable" =: "false"
       backgroundColor (Just p) p' | p == p' = "yellow"
@@ -70,7 +69,7 @@ cell gs p = el "td" $ do
       defaultColor (i,j) | (i + j) `mod` 2 == 0 = "grey"
                          | otherwise            = "white"
       translate (Just (ColoredPiece clr p)) = translatePiece clr p
-      translate _ = static @"chess/blank.svg"
+      translate _                           = static @"chess/blank.svg"
       translatePiece White King   = static @"chess/kl.svg"
       translatePiece White Queen  = static @"chess/ql.svg"
       translatePiece White Rook   = static @"chess/rl.svg"
@@ -84,21 +83,18 @@ cell gs p = el "td" $ do
       translatePiece Black Knight = static @"chess/nd.svg"
       translatePiece Black Pawn   = static @"chess/pd.svg"
 
-click :: Point -> GameState -> GameState
-click new gs@(GameState brd clr act) = fromMaybe (game clr brd) $ case act of
-  Nothing -> do
-    Just (ColoredPiece color piece) <- pure $ brd A.! new
-    guard $ color == clr
-    pure $ GameState brd clr $ Just new
-  Just old -> do
-    newBoard <- basicMove brd clr old new
-    guard $ not $ inCheck newBoard clr
-    pure $ game (opponent clr) newBoard
+click :: Point -> AppState -> AppState
+click new (AppState brd clr act) = fromMaybe (game clr brd) $ case act of
+  Nothing -> case brd <!> new of
+    Just (ColoredPiece color piece) -> do
+      guard $ color == clr
+      pure $ AppState brd clr $ Just new
+    Nothing -> Nothing
+  Just old -> game (opponent clr) <$> move brd clr old new
   where
-    game c b = GameState b c Nothing
-    validGameMove old = validBasicMove brd clr old new
+    game c b = AppState b c Nothing
     validGrab = isJust $ do
-      Just (ColoredPiece color piece) <- pure $ brd A.! new
+      Just (ColoredPiece color piece) <- pure $ brd <!> new
       guard $ color == clr
 
 app
@@ -115,14 +111,20 @@ app = divClass "container" $ do
     el "br" blank
     el "div" $ do
       rec
-        gs  <- foldDyn click initialState pos
-        pos <- mkBoard gs
+        appState <- foldDyn click initialState pos
+        pos <- mkBoard appState
         elAttr "h3" ("style" =: "text-align: center") $ do
-          dynText $ T.pack . scenarioText <$> gs
+          dynText $ T.pack . scenarioText <$> appState
+        elAttr "h4" ("style" =: "text-align: center") $ do
+          dynText $ T.pack . detailText <$> appState
       pure ()
 
-scenarioText :: GameState -> String
-scenarioText (GameState board turn _) = show turn <> checkText where
-  checkText | inCheckMate board turn = " has been checkmated"
+scenarioText :: AppState -> String
+scenarioText (AppState board turn _) = show turn <> checkText where
+  checkText | inCheckmate board turn = " has been checkmated"
+            | inStalemate board turn = " would be next, but it's a stalemate"
             | inCheck board turn     = "'s turn -- to get out of check"
             | otherwise              = "'s turn"
+
+detailText :: AppState -> String
+detailText (AppState board _ _) = show (gameStateCastle board) <> " " <> show (gameStatePhantomPawn board)

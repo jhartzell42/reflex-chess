@@ -11,20 +11,16 @@
 module Common.Chess where
 
 import Control.Monad
-import Control.Monad.Fix (MonadFix)
 import Data.Array.IArray as A
+import Data.Foldable
 import Data.Maybe
-import qualified Data.Text as T
 
 type Point = (Int, Int)
 
 data Color = White | Black deriving (Eq, Show)
 data Piece = King | Queen | Rook | Bishop | Knight | Pawn deriving (Eq, Show)
 
-data ColoredPiece = ColoredPiece
-  { color :: Color
-  , piece :: Piece
-  } deriving (Eq)
+data ColoredPiece = ColoredPiece Color Piece deriving (Eq)
 
 instance Show ColoredPiece where
   show (ColoredPiece clr p) = show clr <> " " <> show p
@@ -50,8 +46,23 @@ initialBoard = A.array ((0, 0), (7,7))
                 5 -> Just Bishop
                 6 -> Just Knight
                 7 -> Just Rook
+                _ -> Nothing
               | otherwise = Nothing
     square i j = ColoredPiece <$> initialColor j <*> piece i j
+
+data CastleState = CastleState
+  { canCastleQueenSide :: Bool
+  , canCastleKingSide  :: Bool
+  } deriving (Show, Eq)
+
+data GameState = GameState
+  { gameStateBoard       :: Board
+  , gameStateCastle      :: CastleState
+  , gameStatePhantomPawn :: (Maybe Point)
+  } deriving Eq
+
+initialGameState :: GameState
+initialGameState = GameState initialBoard (CastleState True True) Nothing
 
 validSquares :: [Point]
 validSquares = [(i, j) | i <- [0..7], j <- [0..7]]
@@ -59,42 +70,68 @@ validSquares = [(i, j) | i <- [0..7], j <- [0..7]]
 isValidSquare :: Point -> Bool
 isValidSquare (x, y) = x >= 0 && y >= 0 && x <= 7 && y <= 7
 
-inCheck :: Board -> Color -> Bool
+(<!>) :: GameState -> Point -> Maybe ColoredPiece
+(GameState board _ _) <!> point = do
+  guard $ isValidSquare point
+  board A.! point
+
+inCheck :: GameState -> Color -> Bool
 inCheck board turn = not $ null $ do
   new <- validSquares
-  Just (ColoredPiece newColor King) <- pure $ board A.! new
+  Just (ColoredPiece newColor King) <- pure $ board <!> new
   guard $ newColor == turn
 
   old <- validSquares
   let attacker = opponent turn
   guard $ validBasicMove board attacker old new
 
-inCheckMate :: Board -> Color -> Bool
-inCheckMate board turn = inCheck board turn && null escapeScenarios where
+inCheckmate :: GameState -> Color -> Bool
+inCheckmate board turn = inCheck board turn && null escapeScenarios where
   escapeScenarios = do
     old <- validSquares
     new <- validSquares
     newBoard <- maybeToList $ basicMove board turn old new
     guard $ not $ inCheck newBoard turn
 
+inStalemate :: GameState -> Color -> Bool
+inStalemate board turn = (not (inCheckmate board turn) && null validMoves) ||
+  (playerPieces board White == [King] && playerPieces board Black == [King]) where
+  validMoves = do
+    old <- validSquares
+    new <- validSquares
+    maybeToList $ move board turn old new
+
 opponent :: Color -> Color
 opponent = \case
   Black -> White
   White -> Black
 
-validBasicMove :: Board -> Color -> Point -> Point -> Bool
+move :: GameState -> Color -> Point -> Point -> Maybe GameState
+move board turn old new = do
+  newBoard <- basicMove board turn old new
+  guard $ not $ inCheck newBoard turn
+  pure newBoard
+
+validBasicMove :: GameState -> Color -> Point -> Point -> Bool
 validBasicMove brd turn old new = isJust $ basicMove brd turn old new
 
-basicMove :: Board -> Color -> Point -> Point -> Maybe Board
+playerPieces :: GameState -> Color -> [Piece]
+playerPieces board player = do
+  square <- validSquares
+  Just (ColoredPiece color piece) <- pure $ board <!> square
+  guard $ color == player
+  pure piece
+
+basicMove :: GameState -> Color -> Point -> Point -> Maybe GameState
 basicMove brd turn old new = do
-  oldSquare@(Just (ColoredPiece color piece)) <- pure $ brd A.! old
+  oldSquare@(Just (ColoredPiece color piece)) <- pure $ brd <!> old
   guard $ turn == color
   guard $ old /= new
-  let dest = brd A.! new
+  let dest = brd <!> new
 
   isCapture <- case dest of
-    Just (ColoredPiece color _) -> do
-      guard $ color /= turn
+    Just (ColoredPiece destColor _) -> do
+      guard $ destColor /= turn
       pure True
     Nothing -> pure False
 
@@ -116,17 +153,40 @@ basicMove brd turn old new = do
       -- but I'm including it anyway so this value is always finite even with
       -- knight's moves
       steps = takeWhile (/= new) $ takeWhile isValidSquare $ iterate nextStep $ nextStep old
-      clearPath = all isNothing $ (brd A.!) <$> steps
+      clearPath = all isNothing $ (brd <!>) <$> steps
+
+      enPassant :: [(Point, Maybe ColoredPiece)]
+      enPassant = toList $ do
+        Pawn <- pure piece
+        phantom@(phantomX, _) <- gameStatePhantomPawn brd
+        guard pawnCaptureLike
+        guard $ new == phantom
+        let
+          coordinates = case turn of
+            White -> (phantomX, 4)
+            Black -> (phantomX, 3)
+        pure $ (coordinates, Nothing)
 
   case piece of
-    Pawn -> guard $ if isCapture then pawnCaptureLike else pawnLike && clearPath
+    Pawn | isCapture -> guard pawnCaptureLike
+    Pawn | otherwise -> guard $ pawnLike || not (null enPassant)
     Bishop -> guard $ bishopLike && clearPath
     Rook -> guard $ rookLike && clearPath
     Queen -> guard $ (rookLike || bishopLike) && clearPath
     Knight -> guard knightLike
     King -> guard kingLike
 
-  pure $ brd // [(old, Nothing), (new, oldSquare)]
+  let
+    newPhantomPawn = do
+      Pawn <- pure piece
+      guard $ abs diffY == 2
+      pure $ (oldX, oldY + stepY)
+
+  pure $ GameState
+    { gameStateBoard = gameStateBoard brd // ([(old, Nothing), (new, oldSquare)] <> enPassant)
+    , gameStateCastle = gameStateCastle brd
+    , gameStatePhantomPawn = newPhantomPawn
+    }
 
   where
     pawnDirection = case turn of
