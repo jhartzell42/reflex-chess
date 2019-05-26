@@ -9,9 +9,6 @@ module Frontend where
 
 import Common.Api
 import Common.Route
-import Control.Arrow     ((&&&))
-import Control.Monad.Fix (MonadFix)
-import Data.Array.IArray as A
 import Data.Monoid       ((<>))
 import qualified Data.Text         as T
 import Obelisk.Frontend
@@ -24,7 +21,7 @@ import qualified Frontend.Chess as Ch
 frontend :: Frontend (R FrontendRoute)
 frontend = Frontend
   { _frontend_head = do
-    el "title" $ text "Obelisk Minimal Example"
+    el "title" $ text "Chess"
     styleSheet $ static @"css/fontawesome.min.css"
     styleSheet $ static @"css/font.css"
     styleSheet $ static @"css/normalize.css"
