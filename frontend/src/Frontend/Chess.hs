@@ -11,7 +11,7 @@
 module Frontend.Chess (app) where
 
 import Control.Monad
-import Control.Monad.Fix (MonadFix)
+import Control.Monad.Fix
 import Data.Maybe
 import qualified Data.Text as T
 
@@ -31,7 +31,6 @@ initialState = AppState initialGameState White Nothing
 
 mkBoard
   :: ( DomBuilder t m
-     , MonadFix m
      , PostBuild t m
      )
   => Dynamic t AppState -> m (Event t Point)
@@ -42,7 +41,6 @@ mkBoard gs =
 
 row
   :: ( DomBuilder t m
-     , MonadFix m
      , PostBuild t m
      )
   => Dynamic t AppState -> Int ->  m (Event t Point)
@@ -53,7 +51,6 @@ row gs j =
 
 cell
   :: ( DomBuilder t m
-     , MonadFix m
      , PostBuild t m
      )
   => Dynamic t AppState -> Point -> m (Event t Point)
@@ -89,7 +86,12 @@ click new (AppState brd clr act) = fromMaybe (game clr brd) $ case act of
     Just (ColoredPiece color piece) -> do
       guard $ color == clr
       pure $ AppState brd clr $ Just new
-    Nothing -> Nothing
+    Nothing -> do
+      [theMove] <- pure $ do
+        old <- validSquares
+        Just mv <- pure $ move brd clr old new
+        pure $ game (opponent clr) mv
+      pure theMove
   Just old -> game (opponent clr) <$> move brd clr old new
   where
     game c b = AppState b c Nothing
@@ -115,7 +117,7 @@ app = divClass "container" $ do
         pos <- mkBoard appState
         elAttr "h3" ("style" =: "text-align: center") $ do
           dynText $ T.pack . scenarioText <$> appState
-        elAttr "h4" ("style" =: "text-align: center") $ do
+        elAttr "h4" ("style" =: "text-align: center; display: none;") $ do
           dynText $ T.pack . detailText <$> appState
       pure ()
 

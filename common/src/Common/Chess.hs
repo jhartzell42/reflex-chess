@@ -176,8 +176,18 @@ basicMove brd turn old new = do
             Black -> (phantomX, 3)
         pure $ (coordinates, Nothing)
 
-      -- TODO: Handle e.g. in check restriction, other restrictions
+      promotion :: [(Point, Maybe ColoredPiece)]
+      promotion = fromMaybe [] $ do
+        Pawn <- pure piece
+        guard $ case (turn, newY) of
+          (White, 7) -> True
+          (Black, 0) -> True
+          _          -> False
+        pure [(new, Just (ColoredPiece turn Queen))]
+
       oldCastleState = gameStateCastle brd turn
+
+      -- TODO: Handle e.g. in check restriction, other restrictions
       castle :: [(Point, Maybe ColoredPiece)]
       castle = fromMaybe [] $ do
         King <- pure piece
@@ -204,14 +214,15 @@ basicMove brd turn old new = do
 
   let
     newGameStateCastle clr | clr /= turn = gameStateCastle brd clr
-                           | clr == turn = case (piece, oldX) of
+                           | otherwise   = case (piece, oldX) of
       (King, _) -> CastleState False False
       (Rook, 7) -> oldCastleState { canCastleKingSide = False }
       (Rook, 0) -> oldCastleState { canCastleQueenSide = False }
       _         -> oldCastleState
+    changes = [(old, Nothing), (new, oldSquare)] <> enPassant <> castle <> promotion
 
   pure $ GameState
-    { gameStateBoard = gameStateBoard brd // ([(old, Nothing), (new, oldSquare)] <> enPassant <> castle)
+    { gameStateBoard = gameStateBoard brd // changes
     , gameStateCastle = newGameStateCastle
     , gameStatePhantomPawn = do
         Pawn <- pure piece
