@@ -10,7 +10,6 @@
 
 module Frontend.Chess (app) where
 
-import Control.Monad
 import Control.Monad.Fix
 import Data.Maybe
 import qualified Data.Text as T
@@ -55,18 +54,18 @@ cell
      )
   => Dynamic t AppState -> Point -> m (Event t Point)
 cell gs p = el "td" $ do
-    (e, _) <- elDynAttr' "img" (square p <$> gs) $ pure ()
+    (e, _) <- elDynAttr' "img" (square <$> gs) $ pure ()
     pure $ p <$ domEvent Click e
     where
-      square pos (AppState bd _ active) = "src" =: (translate $ bd <!> p)
-        <> "style" =: ("display: block; width: 45px; height: 45px; background-color: " <> backgroundColor active p)
+      square (AppState bd _ active) = "src" =: (translate $ bd <!> p)
+        <> "style" =: ("display: block; width: 45px; height: 45px; background-color: " <> backgroundColor active)
         <> "draggable" =: "false"
-      backgroundColor (Just p) p' | p == p' = "yellow"
-      backgroundColor _ p                   = defaultColor p
+      backgroundColor (Just p') | p == p' = "yellow"
+      backgroundColor _                   = defaultColor p
       defaultColor (i,j) | (i + j) `mod` 2 == 0 = "grey"
                          | otherwise            = "white"
-      translate (Just (ColoredPiece clr p)) = translatePiece clr p
-      translate _                           = static @"chess/blank.svg"
+      translate (Just (ColoredPiece clr pp)) = translatePiece clr pp
+      translate _                            = static @"chess/blank.svg"
       translatePiece White King   = static @"chess/kl.svg"
       translatePiece White Queen  = static @"chess/ql.svg"
       translatePiece White Rook   = static @"chess/rl.svg"
@@ -83,7 +82,7 @@ cell gs p = el "td" $ do
 click :: Point -> AppState -> AppState
 click new (AppState brd clr act) = fromMaybe (game clr brd) $ case act of
   Nothing -> case brd <!> new of
-    Just (ColoredPiece color piece) | color == clr -> do
+    Just (ColoredPiece color _) | color == clr -> do
       pure $ AppState brd clr $ Just new
     _ -> do
       [theMove] <- pure $ do
@@ -94,9 +93,6 @@ click new (AppState brd clr act) = fromMaybe (game clr brd) $ case act of
   Just old -> game (opponent clr) <$> move Queen brd clr old new
   where
     game c b = AppState b c Nothing
-    validGrab = isJust $ do
-      Just (ColoredPiece color piece) <- pure $ brd <!> new
-      guard $ color == clr
 
 app
   :: ( DomBuilder t m
@@ -110,14 +106,18 @@ app = divClass "container" $ do
   elAttr "h1" ("style" =: "text-align: center") $ text "Chess"
   el "div" $ do
     el "br" blank
-    el "div" $ do
+    elAttr "div" ("style" =: "text-align: center") $ do
       rec
-        appState <- foldDyn click initialState pos
+        appState <- foldDyn ($) initialState $ leftmost
+          [ click <$> pos
+          , const initialState <$ domEvent Click resetButton
+          ]
         pos <- mkBoard appState
-        elAttr "h3" ("style" =: "text-align: center") $ do
+        el "h3" $ do
           dynText $ T.pack . scenarioText <$> appState
-        elAttr "h4" ("style" =: "text-align: center; display: none;") $ do
+        elAttr "h4" ("style" =: "display: none;") $ do
           dynText $ T.pack . detailText <$> appState
+        (resetButton, _) <- el' "button" $ text "Reset"
       pure ()
 
 scenarioText :: AppState -> String

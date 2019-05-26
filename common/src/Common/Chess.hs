@@ -202,7 +202,7 @@ basicMove promotionPiece brd turn old new = do
         guard clearPath
         let rookOld = (rookX, oldY)
             rookNew = (oldX + stepX, newY)
-        basicMove Queen brd turn rookOld rookNew
+        _ <- basicMove Queen brd turn rookOld rookNew
         let rook = brd <!> rookOld
         pure $ [(rookOld, Nothing), (rookNew, rook)]
 
