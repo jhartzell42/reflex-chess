@@ -1,13 +1,13 @@
-{-# LANGUAGE FlexibleContexts  #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RankNTypes        #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE RecursiveDo       #-}
-{-# LANGUAGE TemplateHaskell   #-}
-{-# LANGUAGE LambdaCase   #-}
-{-# LANGUAGE TypeApplications      #-}
-{-# LANGUAGE RankNTypes            #-}
 {-# LANGUAGE DataKinds             #-}
+{-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE LambdaCase            #-}
+{-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE RankNTypes            #-}
+{-# LANGUAGE RankNTypes            #-}
+{-# LANGUAGE RecursiveDo           #-}
+{-# LANGUAGE ScopedTypeVariables   #-}
+{-# LANGUAGE TemplateHaskell       #-}
+{-# LANGUAGE TypeApplications      #-}
 
 module Frontend.Chess (app) where
 

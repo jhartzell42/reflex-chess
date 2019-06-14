@@ -7,7 +7,6 @@
 {-# LANGUAGE TypeApplications #-}
 module Frontend where
 
-import Common.Api
 import Common.Route
 import Data.Monoid       ((<>))
 import qualified Data.Text         as T
@@ -16,7 +15,6 @@ import Obelisk.Generated.Static
 import Obelisk.Route
 import Reflex.Dom
 import qualified Frontend.Chess as Ch
-
 
 frontend :: Frontend (R FrontendRoute)
 frontend = Frontend
