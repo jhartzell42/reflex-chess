@@ -68,19 +68,19 @@ cell gs p = el "td" $ do
       defaultColor (i,j) | (i + j) `mod` 2 == 0 = "grey"
                          | otherwise            = "white"
       translate (Just (ColoredPiece clr pp)) = translatePiece clr pp
-      translate _                            = static @"chess/blank.svg"
-      translatePiece White King   = static @"chess/kl.svg"
-      translatePiece White Queen  = static @"chess/ql.svg"
-      translatePiece White Rook   = static @"chess/rl.svg"
-      translatePiece White Bishop = static @"chess/bl.svg"
-      translatePiece White Knight = static @"chess/nl.svg"
-      translatePiece White Pawn   = static @"chess/pl.svg"
-      translatePiece Black King   = static @"chess/kd.svg"
-      translatePiece Black Queen  = static @"chess/qd.svg"
-      translatePiece Black Rook   = static @"chess/rd.svg"
-      translatePiece Black Bishop = static @"chess/bd.svg"
-      translatePiece Black Knight = static @"chess/nd.svg"
-      translatePiece Black Pawn   = static @"chess/pd.svg"
+      translate _                            = $(static "chess/blank.svg")
+      translatePiece White King   = $(static "chess/kl.svg")
+      translatePiece White Queen  = $(static "chess/ql.svg")
+      translatePiece White Rook   = $(static "chess/rl.svg")
+      translatePiece White Bishop = $(static "chess/bl.svg")
+      translatePiece White Knight = $(static "chess/nl.svg")
+      translatePiece White Pawn   = $(static "chess/pl.svg")
+      translatePiece Black King   = $(static "chess/kd.svg")
+      translatePiece Black Queen  = $(static "chess/qd.svg")
+      translatePiece Black Rook   = $(static "chess/rd.svg")
+      translatePiece Black Bishop = $(static "chess/bd.svg")
+      translatePiece Black Knight = $(static "chess/nd.svg")
+      translatePiece Black Pawn   = $(static "chess/pd.svg")
 
 click :: Point -> AppState -> AppState
 click new (AppState brd clr act promotion) = fromMaybe (game clr brd) $ case act of
