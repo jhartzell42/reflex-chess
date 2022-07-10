@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts  #-}
+{-# LANGUAGE FlexibleInstances  #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes        #-}
 {-# LANGUAGE RecursiveDo       #-}
@@ -11,9 +12,11 @@
 module Common.Chess where
 
 import Control.Monad
-import Data.Array.IArray as A
+import qualified Data.Array.IArray as A
 import Data.Foldable
 import Data.Maybe
+import Data.Ord
+import GHC.Generics
 
 type Point = (Int, Int)
 
@@ -25,11 +28,11 @@ data ColoredPiece = ColoredPiece Color Piece deriving (Eq)
 instance Show ColoredPiece where
   show (ColoredPiece clr p) = show clr <> " " <> show p
 
-type Board = Array Point (Maybe ColoredPiece)
+type Board = A.Array Point (Maybe ColoredPiece)
 
 initialBoard :: Board
 initialBoard = A.array ((0, 0), (7,7))
-               [ ((i, j), square i j) | i <- [0..7], j <- [0..7]]
+               [ ((i, j), square i j) | i <- [0..7], j <- [0..7] ]
   where
     initialColor n | n >= 6 = Just Black
                    | n <= 1 = Just White
@@ -48,6 +51,7 @@ initialBoard = A.array ((0, 0), (7,7))
                 7 -> Just Rook
                 _ -> Nothing
               | otherwise = Nothing
+    square :: Int -> Int -> Maybe ColoredPiece
     square i j = ColoredPiece <$> initialColor j <*> piece i j
 
 data CastleState = CastleState
@@ -55,21 +59,27 @@ data CastleState = CastleState
   , canCastleKingSide  :: Bool
   } deriving (Show, Eq)
 
+data ChessConfig = ChessConfig
+  { configSelfCapture :: Bool
+  } deriving (Eq, Show)
+
 data GameState = GameState
   { gameStateBoard       :: Board
+  , gameStateTurn        :: Color
   , gameStateCastle      :: Color -> CastleState
   , gameStatePhantomPawn :: (Maybe Point)
-  }
+  , gameStateMoveCount   :: Int
+  , gameStateConfig      :: ChessConfig
+  } deriving Eq
 
-instance Eq GameState where
-  (GameState brd cstl pawn) == (GameState brd' cstl' pawn') =
-    brd == brd' &&
-    cstl White == cstl' White &&
-    cstl Black == cstl' Black &&
-    pawn == pawn'
+instance Eq (Color -> CastleState) where
+  a == b = a White == b White && a Black == b Black
 
-initialGameState :: GameState
-initialGameState = GameState initialBoard (const $ CastleState True True) Nothing
+instance Ord GameState where
+  compare = comparing gameStateMoveCount
+
+initialGS :: ChessConfig -> GameState
+initialGS config = GameState initialBoard White (const $ CastleState True True) Nothing 0 config
 
 validSquares :: [Point]
 validSquares = [(i, j) | i <- [0..7], j <- [0..7]]
@@ -81,10 +91,11 @@ isValidSquare :: Point -> Bool
 isValidSquare (x, y) = x >= 0 && y >= 0 && x <= 7 && y <= 7
 
 (<!>) :: GameState -> Point -> Maybe ColoredPiece
-(GameState board _ _) <!> point = do
+gs <!> point = do
   guard $ isValidSquare point
-  board A.! point
+  gameStateBoard gs A.! point
 
+-- Can check whether either player is in check, for checkmate purposes
 inCheck :: GameState -> Color -> Bool
 inCheck board turn = not $ null $ do
   new <- validSquares
@@ -95,8 +106,9 @@ inCheck board turn = not $ null $ do
   let attacker = opponent turn
   toList $ basicMove Queen board attacker old new
 
-inCheckmate :: GameState -> Color -> Bool
-inCheckmate board turn = inCheck board turn && null escapeScenarios where
+inCheckmate :: GameState -> Bool
+inCheckmate board = inCheck board turn && null escapeScenarios where
+  turn = gameStateTurn board
   escapeScenarios = do
     old <- validSquares
     new <- validSquares
@@ -104,33 +116,43 @@ inCheckmate board turn = inCheck board turn && null escapeScenarios where
     newBoard <- toList $ basicMove piece board turn old new
     guard $ not $ inCheck newBoard turn
 
-inStalemate :: GameState -> Color -> Bool
-inStalemate board turn = (not (inCheckmate board turn) && null validMoves) ||
-  (playerPieces board White == [King] && playerPieces board Black == [King]) where
+inStalemate :: GameState -> Bool
+inStalemate board = or
+  [ not (inCheckmate board) && null validMoves
+  , playerPieces White == [King] && playerPieces Black == [King]
+  ] where
   validMoves = do
     old <- validSquares
     new <- validSquares
     piece <- promotionPieces
-    maybeToList $ move piece board turn old new
+    maybeToList $ move board $ Move old new (gameStateTurn board) piece
+  playerPieces player = do
+    square <- validSquares
+    Just (ColoredPiece color piece) <- pure $ board <!> square
+    guard $ color == player
+    pure piece
 
 opponent :: Color -> Color
 opponent = \case
   Black -> White
   White -> Black
 
-move :: Piece -> GameState -> Color -> Point -> Point -> Maybe GameState
-move piece board turn old new = do
+data Move = Move
+  { moveStart :: Point
+  , moveFinish :: Point
+  , movePlayer :: Color
+  , movePromotion :: Piece
+  }
+  deriving Show
+
+move :: GameState -> Move -> Maybe GameState
+move board (Move old new turn piece) = do
+  guard $ turn == gameStateTurn board
   newBoard <- basicMove piece board turn old new
   guard $ not $ inCheck newBoard turn
   pure newBoard
 
-playerPieces :: GameState -> Color -> [Piece]
-playerPieces board player = do
-  square <- validSquares
-  Just (ColoredPiece color piece) <- pure $ board <!> square
-  guard $ color == player
-  pure piece
-
+-- basicMove is parameterized on who is moving to allow checking for check
 basicMove :: Piece -> GameState -> Color -> Point -> Point -> Maybe GameState
 basicMove promotionPiece brd turn old new = do
   oldSquare@(Just (ColoredPiece color piece)) <- pure $ brd <!> old
@@ -141,7 +163,7 @@ basicMove promotionPiece brd turn old new = do
 
   isCapture <- case dest of
     Just (ColoredPiece destColor _) -> do
-      guard $ destColor /= turn
+      when (not $ configSelfCapture $ gameStateConfig brd) $ guard $ destColor /= turn
       pure True
     Nothing -> pure False
 
@@ -200,6 +222,7 @@ basicMove promotionPiece brd turn old new = do
           _  -> Nothing
         guard $ test oldCastleState
         guard clearPath
+        -- TODO: Check that all squares the rook traverses are not under attack.
         let rookOld = (rookX, oldY)
             rookNew = (oldX + stepX, newY)
         _ <- basicMove Queen brd turn rookOld rookNew
@@ -207,13 +230,17 @@ basicMove promotionPiece brd turn old new = do
         pure $ [(rookOld, Nothing), (rookNew, rook)]
 
   case piece of
-    Pawn | isCapture -> guard pawnCaptureLike
-    Pawn | otherwise -> guard $ pawnLike || not (null enPassant)
-    Bishop -> guard $ bishopLike && clearPath
-    Rook -> guard $ rookLike && clearPath
-    Queen -> guard $ (rookLike || bishopLike) && clearPath
-    Knight -> guard knightLike
-    King -> guard $ kingLike || not (null castle)
+    Pawn | isCapture      -> guard pawnCaptureLike
+    Pawn | null enPassant -> guard $ pawnLike && clearPath
+    Pawn | otherwise      -> pure ()
+
+    Bishop                -> guard $ bishopLike && clearPath
+    Rook                  -> guard $ rookLike && clearPath
+    Queen                 -> guard $ (rookLike || bishopLike) && clearPath
+    Knight                -> guard knightLike
+
+    King | null castle    -> guard kingLike
+    King | otherwise      -> pure ()
 
   let
     newGameStateCastle clr | clr /= turn = gameStateCastle brd clr
@@ -225,12 +252,15 @@ basicMove promotionPiece brd turn old new = do
     changes = [(old, Nothing), (new, oldSquare)] <> enPassant <> castle <> promotion
 
   pure $ GameState
-    { gameStateBoard = gameStateBoard brd // changes
+    { gameStateBoard = gameStateBoard brd A.// changes
+    , gameStateTurn = opponent turn
     , gameStateCastle = newGameStateCastle
     , gameStatePhantomPawn = do
         Pawn <- pure piece
         guard $ abs diffY == 2
         pure $ (oldX, oldY + stepY)
+    , gameStateMoveCount = gameStateMoveCount brd + 1
+    , gameStateConfig = gameStateConfig brd
     }
 
   where

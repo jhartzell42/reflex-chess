@@ -9,10 +9,11 @@
 {-# LANGUAGE TemplateHaskell       #-}
 {-# LANGUAGE TypeApplications      #-}
 
-module Frontend.Chess (app) where
+module Frontend.Chess (localChessBoard) where
 
 import Control.Monad
 import Control.Monad.Fix
+import Data.Bifunctor
 import Data.Maybe
 import qualified Data.Text as T
 
@@ -21,46 +22,47 @@ import Obelisk.Generated.Static
 
 import Common.Chess
 
-data AppState = AppState
-  { appStateState       :: GameState
-  , appStateTurn        :: Color
-  , appStateStartOfMove :: Maybe Point
-  , appStatePromotion   :: Piece
+data WidgetState = WidgetState
+  { widgetStateMoveStart :: Maybe Point
+  , widgetStatePromotion :: Piece
   }
 
-initialState :: AppState
-initialState = AppState initialGameState White Nothing Queen
+initialWidgetState :: WidgetState
+initialWidgetState = WidgetState Nothing Queen
 
 mkBoard
   :: ( DomBuilder t m
      , PostBuild t m
      )
-  => Dynamic t AppState -> m (Event t Point)
-mkBoard gs =
+  => Dynamic t WidgetState -> Dynamic t (Maybe GameState) -> m (Event t Point)
+mkBoard ws dmGs =
   elAttr "table" ("style" =: "margin-left: auto; margin-right: auto") $ el "tbody" $ do
-    rows <- mapM (row gs) [7, 6..0]
+    rows <- mapM (row ws dmGs) [7, 6..0]
     pure $ leftmost rows
 
 row
   :: ( DomBuilder t m
      , PostBuild t m
      )
-  => Dynamic t AppState -> Int ->  m (Event t Point)
-row gs j =
+  => Dynamic t WidgetState -> Dynamic t (Maybe GameState) -> Int ->  m (Event t Point)
+row ws dmGs j =
   el "tr" $ do
-    cells <- mapM (cell gs) [(i, j) | i <- [0..7]]
+    cells <- mapM (cell ws dmGs) [(i, j) | i <- [0..7]]
     pure $ leftmost cells
 
 cell
   :: ( DomBuilder t m
      , PostBuild t m
      )
-  => Dynamic t AppState -> Point -> m (Event t Point)
-cell gs p = el "td" $ do
-    (e, _) <- elDynAttr' "img" (square <$> gs) $ pure ()
+  => Dynamic t WidgetState -> Dynamic t (Maybe GameState) -> Point -> m (Event t Point)
+cell ws dmGs p = el "td" $ do
+    (e, _) <- elDynAttr' "img" (imgTag <$> ws <*> dmGs) $ pure ()
     pure $ p <$ domEvent Click e
     where
-      square (AppState bd _ active _) = "src" =: (translate $ bd <!> p)
+      coloredPiece mgs = do
+        gs <- mgs
+        gs <!> p
+      imgTag (WidgetState active _) mgs = "src" =: translate (coloredPiece mgs)
         <> "style" =: ("display: block; width: 45px; height: 45px; background-color: " <> backgroundColor active)
         <> "draggable" =: "false"
       backgroundColor (Just p') | p == p' = "yellow"
@@ -68,7 +70,7 @@ cell gs p = el "td" $ do
       defaultColor (i,j) | (i + j) `mod` 2 == 0 = "grey"
                          | otherwise            = "white"
       translate (Just (ColoredPiece clr pp)) = translatePiece clr pp
-      translate _                            = $(static "chess/blank.svg")
+      translate _                 = $(static "chess/blank.svg")
       translatePiece White King   = $(static "chess/kl.svg")
       translatePiece White Queen  = $(static "chess/ql.svg")
       translatePiece White Rook   = $(static "chess/rl.svg")
@@ -82,63 +84,87 @@ cell gs p = el "td" $ do
       translatePiece Black Knight = $(static "chess/nd.svg")
       translatePiece Black Pawn   = $(static "chess/pd.svg")
 
-click :: Point -> AppState -> AppState
-click new (AppState brd clr act promotion) = fromMaybe (game clr brd) $ case act of
-  Nothing -> case brd <!> new of
-    Just (ColoredPiece color _) | color == clr -> do
-      pure $ AppState brd clr (Just new) promotion
-    _ -> do
-      [theMove] <- pure $ do
-        old <- validSquares
-        Just mv <- pure $ moveFrom old
-        pure $ game (opponent clr) mv
-      pure theMove
-  Just old -> game (opponent clr) <$> moveFrom old
-  where
-    moveFrom old = move promotion brd clr old new
-    game c b = AppState b c Nothing promotion
+handleClick :: (WidgetState, Maybe GameState) -> Point -> (WidgetState, Maybe Move)
+handleClick (WidgetState highlight promotion, mBoard) new = (WidgetState newHighlight promotion, mMove) where
+  newHighlight = do
+    board <- mBoard
+    guard $ isNothing highlight
+    guard $ isNothing mMove
+    case board <!> new of
+      Just (ColoredPiece color _) | color == gameStateTurn board -> pure new
+      _                                                          -> Nothing
+  mMove = do
+    case highlight of
+      Just old -> do
+        moveFrom old
+      Nothing -> do
+        board <- mBoard
+        guard $ not $ configSelfCapture $ gameStateConfig board
+        [mv] <- pure $ do
+          old <- validSquares
+          Just mv <- pure $ moveFrom old
+          pure mv
+        pure mv
+  moveFrom old = do
+    board <- mBoard
+    let mv = Move old new (gameStateTurn board) promotion
+    void $ move board mv
+    pure mv
 
-app
-  :: ( DomBuilder t m
+localChessBoard
+  :: forall t m.
+     ( DomBuilder t m
      , MonadFix m
      , MonadHold t m
      , PostBuild t m
      )
   => m ()
-app = divClass "container" $ do
-  el "br" blank
-  elAttr "h1" ("style" =: "text-align: center") $ text "Chess"
-  el "div" $ do
-    el "br" blank
-    elAttr "div" ("style" =: "text-align: center") $ do
-      rec
-        appState <- foldDyn ($) initialState $ leftmost $
-          [click <$> pos, const initialState <$ domEvent Click resetButton] <> promotionPiece
-        pos <- mkBoard appState
-        el "h3" $ do
-          dynText $ T.pack . scenarioText <$> appState
-        elAttr "h4" ("style" =: "display: none;") $ do
-          dynText $ T.pack . detailText <$> appState
-        promotionPiece <- elAttr "ul" ("style" =: "list-style: none;") $ forM promotionPieces $ \piece -> do
-          (e, _) <- el' "li" $ dynText $ T.pack . pieceText piece <$> appState
-          pure $ (\state -> state { appStatePromotion = piece }) <$ domEvent Click e
-        (resetButton, _) <- el' "button" $ text "Reset"
-      pure ()
+localChessBoard = do
+    let initial = initialGS $ ChessConfig False -- no self-capture
+        mkMove mBoard mv = do
+          board <- mBoard
+          move board mv
+    rec
+        localBoard <- holdDyn (Just initial) $ attachWith mkMove (current localBoard) chessMove
+        chessMove <- chessBoard localBoard
+    pure ()
 
-pieceText :: Piece -> AppState -> String
-pieceText piece (AppState _ _ _ piece') | piece == piece' = "*" <> show piece
-                                        | otherwise       = show piece
+chessBoard
+  :: forall t m.
+     ( DomBuilder t m
+     , MonadFix m
+     , MonadHold t m
+     , PostBuild t m
+     )
+  => Dynamic t (Maybe GameState)
+  -> m (Event t Move)
+chessBoard mGameState = el "div" $ do
+  elAttr "div" ("style" =: "text-align: center") $ do
+    rec
+      widgetState <- foldDyn ($) initialWidgetState $ leftmost $ [const <$> eNewWidgetState] <> promotionPiece
+      click <- mkBoard widgetState mGameState
+      let
+        (eNewWidgetState, eMove) = second (fmapMaybe id) $ splitE $
+          attachWith handleClick (current appState) click
+        appState = (,) <$> widgetState <*> mGameState
+      el "br" blank
+      el "br" blank
+      el "h1" $ do
+        dynText $ T.pack . scenarioText <$> mGameState
+      promotionPiece <- elAttr "ul" ("style" =: "list-style: none;") $ forM promotionPieces $ \piece -> do
+        (e, _) <- el' "li" $ dynText $ T.pack . pieceText piece <$> widgetState
+        pure $ (\state -> state { widgetStatePromotion = piece }) <$ domEvent Click e
+    pure eMove
 
-scenarioText :: AppState -> String
-scenarioText (AppState board turn _ _) = show turn <> checkText where
-  checkText | inCheckmate board turn = " has been checkmated"
-            | inStalemate board turn = " would be next, but it's a stalemate"
+pieceText :: Piece -> WidgetState -> String
+pieceText piece (WidgetState _ piece') | piece == piece' = "*" <> show piece
+                                       | otherwise       = show piece
+
+scenarioText :: Maybe GameState -> String
+scenarioText Nothing = "Game is loading..."
+scenarioText (Just board) = show turn <> checkText where
+  turn = gameStateTurn board
+  checkText | inCheckmate board = " has been checkmated"
+            | inStalemate board = " would be next, but it's a stalemate"
             | inCheck board turn     = "'s turn -- to get out of check"
             | otherwise              = "'s turn"
-
-detailText :: AppState -> String
-detailText (AppState board _ _ _) = unwords
-  [ show $ gameStateCastle board White
-  , show $ gameStateCastle board Black
-  , show $ gameStatePhantomPawn board
-  ]

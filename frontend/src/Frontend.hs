@@ -26,7 +26,7 @@ frontend = Frontend
     styleSheet $ $(static "css/style.css")
 
   , _frontend_body = do
-        el "main" $ el "article" $ Ch.app
+        el "main" $ el "article" $ Ch.localChessBoard
   }
 
 styleSheet :: DomBuilder t m => T.Text -> m ()

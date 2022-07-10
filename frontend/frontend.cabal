@@ -1,7 +1,39 @@
+cabal-version: 2.2
 name: frontend
 version: 0.1
-cabal-version: >= 1.8
 build-type: Simple
+
+common extensions
+  default-extensions:
+    AllowAmbiguousTypes
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveDataTypeable
+    DeriveFoldable
+    DeriveFunctor
+    DeriveGeneric
+    DeriveTraversable
+    EmptyCase
+    FlexibleContexts
+    FlexibleInstances
+    FunctionalDependencies
+    GADTs
+    GeneralizedNewtypeDeriving
+    KindSignatures
+    LambdaCase
+    MultiParamTypeClasses
+    OverloadedStrings
+    PolyKinds
+    QuasiQuotes
+    RankNTypes
+    RecursiveDo
+    ScopedTypeVariables
+    StandaloneDeriving
+    TemplateHaskell
+    TypeApplications
+    TypeFamilies
+    TypeOperators
 
 library
   hs-source-dirs: src
